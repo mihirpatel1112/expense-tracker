@@ -148,6 +148,49 @@ export function MonthlyExpenseChart({ data }: { data: ChartPoint[] }) {
   );
 }
 
+/** One series: spent per bucket (e.g. custom category by month). */
+export function MonthlySpentOnlyChart({ data }: { data: ChartPoint[] }) {
+  if (data.length === 0) {
+    return <EmptyChart />;
+  }
+
+  return (
+    <div className="h-72">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+          <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+          <XAxis
+            axisLine={false}
+            dataKey="label"
+            tickLine={false}
+            tick={{ fill: "#8e8e93", fontSize: 12 }}
+          />
+          <YAxis
+            axisLine={false}
+            tickFormatter={formatCurrency}
+            tickLine={false}
+            tick={{ fill: "#8e8e93", fontSize: 12 }}
+            width={58}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "#1c1c1e",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 18,
+              color: "#fff",
+            }}
+            formatter={(value: unknown) => [
+              formatCurrency(Number(value ?? 0)),
+              "Spent",
+            ]}
+          />
+          <Bar dataKey="spent" fill="#ff2d55" radius={[12, 12, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function NetTotalChart({ data }: { data: ChartPoint[] }) {
   if (data.length === 0) {
     return <EmptyChart />;

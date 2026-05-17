@@ -14,6 +14,7 @@ import {
   NetTotalChart,
   SpendingBreakdownChart,
 } from "@/components/expense-charts";
+import { CustomAnalysisPanel } from "@/components/custom-analysis-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -29,6 +30,7 @@ type SearchParams = Promise<{
   entriesMonth?: string;
   groupEntries?: string;
   analysisMonth?: string;
+  customGroup?: string;
 }>;
 
 function formatCurrency(value: number) {
@@ -97,6 +99,12 @@ function emptyDashboard(): DashboardData {
         averageRate: null,
       },
     },
+    customAnalysis: {
+      options: [],
+      selectedGroupKey: null,
+      selectedGroupLabel: null,
+      monthlySpendSeries: [],
+    },
   };
 }
 
@@ -164,18 +172,22 @@ export default async function Home({
   }
 
   const params = await searchParams;
-  let setupMissing = false;
-  let dashboard: DashboardData;
   const activeTab =
-    params.tab === "entries" || params.tab === "analysis"
+    params.tab === "entries" ||
+    params.tab === "analysis" ||
+    params.tab === "custom"
       ? params.tab
       : "overview";
+
+  let setupMissing = false;
+  let dashboard: DashboardData;
 
   try {
     dashboard = await getDashboardData(
       undefined,
       params.entriesMonth,
       params.analysisMonth,
+      { tab: activeTab, customGroup: params.customGroup },
     );
   } catch (error) {
     if (!isMissingTableError(error)) {
@@ -201,6 +213,10 @@ export default async function Home({
 
     if (tab === "analysis" && params.analysisMonth) {
       query.set("analysisMonth", params.analysisMonth);
+    }
+
+    if (tab === "custom" && params.customGroup) {
+      query.set("customGroup", params.customGroup);
     }
 
     return `/?${query.toString()}`;
@@ -282,7 +298,7 @@ export default async function Home({
           </Card>
         ) : null}
 
-        <nav className="grid w-full grid-cols-3 gap-2 rounded-4xl border border-white/10 bg-[#1c1c1e]/70 p-2 backdrop-blur sm:flex sm:overflow-x-auto">
+        <nav className="grid w-full grid-cols-2 gap-2 rounded-4xl border border-white/10 bg-[#1c1c1e]/70 p-2 backdrop-blur sm:flex sm:overflow-x-auto">
           <TabLink active={activeTab === "overview"} href={tabHref("overview")}>
             Overview
           </TabLink>
@@ -291,6 +307,9 @@ export default async function Home({
           </TabLink>
           <TabLink active={activeTab === "analysis"} href={tabHref("analysis")}>
             Analysis
+          </TabLink>
+          <TabLink active={activeTab === "custom"} href={tabHref("custom")}>
+            Custom
           </TabLink>
         </nav>
 
@@ -771,6 +790,29 @@ export default async function Home({
                 </CardContent>
               </Card>
             </div>
+          </section>
+        ) : null}
+
+        {activeTab === "custom" ? (
+          <section className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Custom analysis</CardTitle>
+                <p className="text-sm text-zinc-400">
+                  Search by label, pick a smart group (fuel and Wise/NRE behave
+                  like the grouped entries view), then see monthly spent for that
+                  group across all uploads.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <CustomAnalysisPanel
+                  monthlySpendSeries={dashboard.customAnalysis.monthlySpendSeries}
+                  options={dashboard.customAnalysis.options}
+                  selectedGroupKey={dashboard.customAnalysis.selectedGroupKey}
+                  selectedGroupLabel={dashboard.customAnalysis.selectedGroupLabel}
+                />
+              </CardContent>
+            </Card>
           </section>
         ) : null}
       </div>
