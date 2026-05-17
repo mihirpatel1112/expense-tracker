@@ -129,12 +129,23 @@ function normalizeDescription(description: string) {
     return "wise nre transfer";
   }
 
+  // All fuel rows (with or without odometer / litres) share one group for breakdowns.
+  if (/^fuel\b/.test(normalized)) {
+    return "fuel";
+  }
+
   return normalized;
 }
 
 function groupLabel(description: string) {
-  if (normalizeDescription(description) === "wise nre transfer") {
+  const key = normalizeDescription(description);
+
+  if (key === "wise nre transfer") {
     return "Wise / NRE transfer";
+  }
+
+  if (key === "fuel") {
+    return "Fuel";
   }
 
   return description;
