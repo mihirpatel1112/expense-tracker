@@ -1,4 +1,5 @@
 import { assertDatabaseUrl, sql } from "@/lib/db";
+import { expenseGroupKey, expenseGroupLabel, expenseGroupDisplayLabelFromKey } from "@/lib/description-groups";
 
 type MoneyValue = number | string | null;
 
@@ -66,6 +67,20 @@ type FuelReading = {
   litres: number;
 };
 
+export type CustomAnalysisOption = {
+  key: string;
+  label: string;
+  totalSpent: number;
+  count: number;
+};
+
+export type CustomAnalysisState = {
+  options: CustomAnalysisOption[];
+  selectedGroupKey: string | null;
+  selectedGroupLabel: string | null;
+  monthlySpendSeries: ChartPoint[];
+};
+
 export type DashboardData = {
   selectedMonth: string | null;
   selectedMonthLabel: string;
@@ -80,6 +95,7 @@ export type DashboardData = {
   monthlyChart: ChartPoint[];
   recentEntries: ExpenseEntry[];
   groupedEntries: ExpenseEntry[];
+  customAnalysis: CustomAnalysisState;
   analysis: {
     averageMonthlySpent: number;
     averageMonthlyReceived: number;
@@ -111,6 +127,95 @@ function monthLabel(monthKey: string) {
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
+const EMPTY_CUSTOM_ANALYSIS: CustomAnalysisState = {
+  options: [],
+  selectedGroupKey: null,
+  selectedGroupLabel: null,
+  monthlySpendSeries: [],
+};
+
+function monthKeyFromIsoDate(date: string) {
+  return date.slice(0, 7);
+}
+
+function buildCustomAnalysisFromRows(
+  rows: EntryRow[],
+  requestedGroup: string | undefined,
+): CustomAnalysisState {
+  const optionMap = new Map<
+    string,
+    { key: string; label: string; totalSpent: number; count: number }
+  >();
+
+  for (const row of rows) {
+    const key = expenseGroupKey(row.description);
+    const spent = toMoney(row.spent);
+    if (spent <= 0) {
+      continue;
+    }
+
+    const existing = optionMap.get(key);
+    if (existing) {
+      existing.totalSpent += spent;
+      existing.count += 1;
+    } else {
+      optionMap.set(key, {
+        key,
+        label: expenseGroupLabel(row.description),
+        totalSpent: spent,
+        count: 1,
+      });
+    }
+  }
+
+  const options = [...optionMap.values()].sort(
+    (a, b) => b.totalSpent - a.totalSpent,
+  );
+
+  const raw = requestedGroup?.trim();
+  const selectedGroupKey =
+    raw && raw.length > 0 ? expenseGroupKey(raw) : null;
+
+  const selectedGroupLabel =
+    selectedGroupKey === null
+      ? null
+      : (options.find((o) => o.key === selectedGroupKey)?.label ??
+        expenseGroupDisplayLabelFromKey(selectedGroupKey));
+
+  const monthlySpendSeries: ChartPoint[] = [];
+  if (selectedGroupKey !== null) {
+    const byMonth = new Map<string, number>();
+    for (const row of rows) {
+      if (expenseGroupKey(row.description) !== selectedGroupKey) {
+        continue;
+      }
+      const spent = toMoney(row.spent);
+      if (spent <= 0) {
+        continue;
+      }
+      const monthKey = monthKeyFromIsoDate(row.date);
+      byMonth.set(monthKey, (byMonth.get(monthKey) ?? 0) + spent);
+    }
+    for (const [monthKey, spent] of [...byMonth.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
+      monthlySpendSeries.push({
+        label: monthLabel(monthKey),
+        spent,
+        received: 0,
+        net: -spent,
+      });
+    }
+  }
+
+  return {
+    options,
+    selectedGroupKey,
+    selectedGroupLabel,
+    monthlySpendSeries,
+  };
+}
+
 function mapEntry(row: EntryRow): ExpenseEntry {
   return {
     id: row.id,
@@ -122,40 +227,11 @@ function mapEntry(row: EntryRow): ExpenseEntry {
   };
 }
 
-function normalizeDescription(description: string) {
-  const normalized = description.trim().toLowerCase().replace(/\s+/g, " ");
-
-  if (/transfer\s+to\s+(wise|nre)/i.test(normalized)) {
-    return "wise nre transfer";
-  }
-
-  // All fuel rows (with or without odometer / litres) share one group for breakdowns.
-  if (/^fuel\b/.test(normalized)) {
-    return "fuel";
-  }
-
-  return normalized;
-}
-
-function groupLabel(description: string) {
-  const key = normalizeDescription(description);
-
-  if (key === "wise nre transfer") {
-    return "Wise / NRE transfer";
-  }
-
-  if (key === "fuel") {
-    return "Fuel";
-  }
-
-  return description;
-}
-
 function groupEntries(rows: EntryRow[]) {
   const grouped = new Map<string, ExpenseEntry>();
 
   for (const row of rows) {
-    const key = normalizeDescription(row.description);
+    const key = expenseGroupKey(row.description);
     const existing = grouped.get(key);
 
     if (existing) {
@@ -167,7 +243,7 @@ function groupEntries(rows: EntryRow[]) {
 
     grouped.set(key, {
       ...mapEntry(row),
-      description: groupLabel(row.description),
+      description: expenseGroupLabel(row.description),
     });
   }
 
@@ -227,7 +303,7 @@ function buildFuelAnalysis(rows: EntryRow[]) {
 
 function buildRemittanceAnalysis(rows: EntryRow[]): RemittanceAnalysis {
   const remittanceRows = rows.filter(
-    (row) => normalizeDescription(row.description) === "wise nre transfer",
+    (row) => expenseGroupKey(row.description) === "wise nre transfer",
   );
   const totalAud = remittanceRows.reduce(
     (total, row) => total + toMoney(row.spent),
@@ -285,10 +361,16 @@ function buildAnalysis(months: MonthOption[], rows: EntryRow[]) {
   };
 }
 
+export type DashboardLoadOptions = {
+  tab?: string;
+  customGroup?: string;
+};
+
 export async function getDashboardData(
   requestedMonth?: string,
   requestedEntriesMonth?: string,
   requestedAnalysisMonth?: string,
+  loadOptions?: DashboardLoadOptions,
 ): Promise<DashboardData> {
   assertDatabaseUrl();
 
@@ -353,6 +435,10 @@ export async function getDashboardData(
       monthlyChart: [],
       recentEntries: [],
       groupedEntries: [],
+      customAnalysis:
+        loadOptions?.tab === "custom"
+          ? buildCustomAnalysisFromRows([], loadOptions.customGroup)
+          : EMPTY_CUSTOM_ANALYSIS,
       analysis: {
         averageMonthlySpent: 0,
         averageMonthlyReceived: 0,
@@ -466,6 +552,10 @@ export async function getDashboardData(
     })),
     recentEntries: entryRows.map(mapEntry),
     groupedEntries: groupEntries(entryRows),
+    customAnalysis:
+      loadOptions?.tab === "custom"
+        ? buildCustomAnalysisFromRows(allEntryRows, loadOptions.customGroup)
+        : EMPTY_CUSTOM_ANALYSIS,
     analysis: buildAnalysis(
       selectedAnalysisMonth === "all"
         ? months
